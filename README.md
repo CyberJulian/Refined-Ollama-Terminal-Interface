@@ -51,7 +51,7 @@ Terminal AI simplifies the process of interacting with AI models in a terminal e
 ## Usage
 1. Run the application:
    ```bash
-   python3 TerminalAIv1.334.py
+   python3 TerminalAI.py
    ```
 2. Follow the on-screen instructions to:
     - Pull a new AI model.
