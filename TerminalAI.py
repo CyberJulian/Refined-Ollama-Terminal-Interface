@@ -8,8 +8,10 @@ from rich.prompt import Prompt
 from rich.table import Table
 from rich.live import Live
 from rich.markdown import Markdown
+from rich.text import Text
 import json
 from datetime import datetime
+import textwrap
 
 console = Console()
 
@@ -26,6 +28,105 @@ def clear_terminal():
 
 # Filepath for storing past chats
 PAST_CHATS_FILE = "past_chats.json"
+
+def wrap_text_for_terminal(text, width=None):
+    """
+    Wrap text to fit terminal width, handling long lines and preserving formatting.
+    Special handling for tables and structured content.
+    """
+    if width is None:
+        terminal_width, _ = get_terminal_size()
+        # Leave some margin for panel borders and padding
+        width = max(50, terminal_width - 15)
+    
+    # If text contains table-like structures, handle them specially
+    if '│' in text or '─' in text or '┌' in text or '┐' in text or '└' in text or '┘' in text:
+        # This is likely a formatted table - try to preserve structure
+        lines = text.split('\n')
+        wrapped_lines = []
+        for line in lines:
+            if len(line) <= width:
+                wrapped_lines.append(line)
+            else:
+                # For very long table lines, break at reasonable points
+                if '│' in line:
+                    # Try to break at table cell boundaries
+                    parts = line.split('│')
+                    current_line = ""
+                    for i, part in enumerate(parts):
+                        test_line = current_line + part + ('│' if i < len(parts) - 1 else '')
+                        if len(test_line) <= width:
+                            current_line = test_line
+                        else:
+                            if current_line:
+                                wrapped_lines.append(current_line)
+                            current_line = part + ('│' if i < len(parts) - 1 else '')
+                    if current_line:
+                        wrapped_lines.append(current_line)
+                else:
+                    # Fallback to regular wrapping for non-table lines
+                    wrapped = textwrap.fill(line, width=width,
+                                          break_long_words=True,
+                                          break_on_hyphens=True)
+                    wrapped_lines.append(wrapped)
+        return '\n'.join(wrapped_lines)
+    
+    # Split text into paragraphs for regular content
+    paragraphs = text.split('\n\n')
+    wrapped_paragraphs = []
+    
+    for paragraph in paragraphs:
+        # Handle code blocks and preserve their formatting
+        if (paragraph.strip().startswith('```') or
+            paragraph.strip().startswith('    ') or
+            paragraph.strip().startswith('\t')):
+            # For code blocks, wrap at character limit but preserve indentation
+            lines = paragraph.split('\n')
+            wrapped_lines = []
+            for line in lines:
+                if len(line) <= width:
+                    wrapped_lines.append(line)
+                else:
+                    # For very long code lines, break but preserve indentation
+                    indent = len(line) - len(line.lstrip())
+                    indent_str = line[:indent]
+                    content = line[indent:]
+                    
+                    # Wrap the content part
+                    content_width = width - indent
+                    if content_width > 20:  # Minimum reasonable width
+                        wrapped = textwrap.fill(content,
+                                              width=content_width,
+                                              break_long_words=True,
+                                              break_on_hyphens=True)
+                        # Add indentation back to each line
+                        indented_lines = [indent_str + wrapped_line
+                                        for wrapped_line in wrapped.split('\n')]
+                        wrapped_lines.extend(indented_lines)
+                    else:
+                        # If indent is too large, just break the line
+                        wrapped_lines.append(line[:width])
+                        if len(line) > width:
+                            wrapped_lines.append(line[width:])
+            wrapped_paragraphs.append('\n'.join(wrapped_lines))
+        else:
+            # Handle regular text
+            lines = paragraph.split('\n')
+            wrapped_lines = []
+            for line in lines:
+                if len(line.strip()) == 0:
+                    wrapped_lines.append('')
+                elif len(line) <= width:
+                    wrapped_lines.append(line)
+                else:
+                    # Wrap long lines
+                    wrapped = textwrap.fill(line, width=width,
+                                          break_long_words=True,
+                                          break_on_hyphens=True)
+                    wrapped_lines.append(wrapped)
+            wrapped_paragraphs.append('\n'.join(wrapped_lines))
+    
+    return '\n\n'.join(wrapped_paragraphs)
 
 def load_past_chats():
     """Load past chats from the JSON file."""
@@ -128,14 +229,16 @@ def view_past_chats():
                     )
                     console.print(details_panel)
 
-                    # Chat conversation display
+                    # Chat conversation display with proper wrapping
                     console.print("\n[bold]Chat Conversation:[/bold]")
                     for message in selected_chat['conversation']:
                         role = message['role']
                         content = message['content']
+                        # Wrap content to fit terminal
+                        wrapped_content = wrap_text_for_terminal(content)
                         # Colorize based on role
                         role_color = "green" if role == 'user' else "blue"
-                        console.print(f"[bold {role_color}]{role.capitalize()}:[/bold {role_color}] {content}")
+                        console.print(f"[bold {role_color}]{role.capitalize()}:[/bold {role_color}] {wrapped_content}")
 
                     # Options after viewing
                     console.print("\n[dim]Options:[/dim]")
@@ -217,8 +320,8 @@ def display_models_table(models):
     # Add rows
     for i, model in enumerate(models, 1):
         table.add_row(
-            str(i), 
-            model['name'],  
+            str(i),
+            model['name'],
             model['size']
         )
     
@@ -226,7 +329,7 @@ def display_models_table(models):
 
 def format_markdown_for_terminal(markdown_text):
     """
-    Convert markdown to a terminal-friendly format with improved formatting.
+    Convert markdown to a terminal-friendly format with improved formatting and text wrapping.
     
     This function handles:
     - Converting bullet points to actual bullet points
@@ -234,9 +337,21 @@ def format_markdown_for_terminal(markdown_text):
     - Code blocks
     - Headings
     """
+    # Get terminal width and calculate safe content width
+    terminal_width, _ = get_terminal_size()
+    # Account for panel borders, padding, and some safety margin
+    safe_width = max(50, terminal_width - 15)
+    
+    # Wrap the text first to prevent overflow
+    wrapped_text = wrap_text_for_terminal(markdown_text, width=safe_width)
     
     # Use Rich's Markdown renderer for terminal output
-    return Markdown(markdown_text)
+    markdown_obj = Markdown(wrapped_text)
+    
+    # Force width constraint on the markdown object
+    markdown_obj.markup = True
+    
+    return markdown_obj
 
 def get_multi_line_input():
     """
@@ -264,7 +379,7 @@ def pull_model():
 
         # Predefined list of recommended models for easier selection
         recommended_models = [
-            "gemma3", "deepseek-r1", "phi4", "llama3.2", 
+            "gemma3", "deepseek-r1", "phi4", "llama3.2",
             "llama2-uncensored"
         ]
 
@@ -278,7 +393,7 @@ def pull_model():
             col1 = recommended_models[i]
             col2 = recommended_models[i+1] if i+1 < len(recommended_models) else ""
             recommended_table.add_row(
-                f"[cyan]{col1}[/cyan]", 
+                f"[cyan]{col1}[/cyan]",
                 f"[cyan]{col2}[/cyan]"
             )
 
@@ -300,8 +415,8 @@ def pull_model():
 
             # Model parameter selection
             model_size = Prompt.ask(
-                "[bold green]Model Parameter (optional)[/bold green]", 
-                default="latest", 
+                "[bold green]Model Parameter (optional)[/bold green]",
+                default="latest",
                 show_default=False
             )
             model_size = model_size.strip() if model_size.strip() else "latest"
@@ -342,9 +457,9 @@ def pull_model():
 
                     # Execute the `ollama pull` command with explicit error handling and encoding
                     result = subprocess.run(
-                        ['ollama', 'pull', full_model], 
-                        capture_output=True, 
-                        text=True, 
+                        ['ollama', 'pull', full_model],
+                        capture_output=True,
+                        text=True,
                         encoding='utf-8',  # Explicitly use UTF-8 encoding
                         errors='replace',  # Replace undecodable bytes
                         check=True
@@ -406,8 +521,8 @@ def remove_model():
         
         for i, model in enumerate(models, 1):
             remove_table.add_row(
-                str(i), 
-                model['name'], 
+                str(i),
+                model['name'],
                 model['size']
             )
         
@@ -467,9 +582,9 @@ def remove_model():
 
                 # Execute the `ollama rm` command with explicit error handling and encoding
                 result = subprocess.run(
-                    ['ollama', 'rm', selected_model], 
-                    capture_output=True, 
-                    text=True, 
+                    ['ollama', 'rm', selected_model],
+                    capture_output=True,
+                    text=True,
                     encoding='utf-8',  # Explicitly use UTF-8 encoding
                     errors='replace',  # Replace undecodable bytes
                     check=True
@@ -606,8 +721,8 @@ def start_chat():
             with Live(console=console, refresh_per_second=10) as live:
                 # Streaming response
                 response_panel = Panel(
-                    "Thinking...", 
-                    title=f"[bold dark_olive_green1]{selected_model} Response[/bold dark_olive_green1]", 
+                    "Thinking...",
+                    title=f"[bold dark_olive_green1]{selected_model} Response[/bold dark_olive_green1]",
                     border_style="dark_olive_green1",
                     padding=(1, 2),
                     expand=False
@@ -618,8 +733,8 @@ def start_chat():
                 first_chunk = True
                 try:
                     for chunk in ollama.chat(
-                        model=selected_model, 
-                        messages=sanitized_history, 
+                        model=selected_model,
+                        messages=sanitized_history,
                         stream=True
                     ):
                         if 'message' in chunk:
@@ -632,13 +747,18 @@ def start_chat():
                             chunk_content = chunk['message'].get('content', '')
                             full_response += chunk_content
 
+                            # Get terminal width and set panel width constraints
+                            terminal_width, _ = get_terminal_size()
+                            panel_width = min(terminal_width - 4, 120)  # Max width with safety margin
+
                             # Update the display with current response
                             response_panel = Panel(
-                                format_markdown_for_terminal(full_response), 
-                                title=f"[bold pink3]{selected_model} Response[/bold pink3]", 
+                                format_markdown_for_terminal(full_response),
+                                title=f"[bold pink3]{selected_model} Response[/bold pink3]",
                                 border_style="pink3",
                                 padding=(1, 2),
-                                expand=False
+                                expand=False,
+                                width=panel_width
                             )
                             live.update(response_panel)
 
